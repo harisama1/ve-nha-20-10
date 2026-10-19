@@ -32,9 +32,9 @@ body{margin:0;background:var(--ink);color:var(--milk);overflow:hidden;font-famil
 #msg{position:fixed;left:0;right:0;top:50%;transform:translateY(-55%);text-align:center;pointer-events:none;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
   display:flex;flex-direction:column;align-items:center;gap:18px}
-#line{margin:0;font-weight:400;white-space:pre-line;text-wrap:balance;font-size:clamp(42px,9.5vw,104px);line-height:.95;
+#line{margin:0;font-weight:400;white-space:pre-line;text-wrap:balance;font-size:clamp(40px,12vw,104px);line-height:.95;
   letter-spacing:.03em;color:var(--lotus);text-shadow:4px 4px 0 var(--rose),8px 8px 0 #3a1240}
-#date{margin:0;font-size:clamp(26px,5vw,44px);letter-spacing:.3em;color:var(--gold);opacity:0;transition:opacity .6s steps(5)}
+#date{margin:0;font-size:clamp(28px,7vw,44px);letter-spacing:.3em;color:var(--gold);opacity:0;transition:opacity .6s steps(5)}
 #date.on{opacity:1}
 .cursor{display:inline-block;width:.45em;height:.12em;background:var(--lotus);animation:blink .6s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
@@ -75,7 +75,7 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const T = { planeEnd:8.8, walk:8.8, walkEnd:15.6, house:15.6, doorOpen:19.0, doorDone:19.8, momOut:19.8, sisOut:20.3, outDone:21.0,
             turn:21.2, gift1:21.6, gift1End:22.4, gift2:23.0, gift2End:23.8, hug:24.4, hugDone:25.4, fade:27.2, text:29.0 };
 
-let W, H, PS, cs;
+let W, H, PS, cs, portrait = false;
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, u) => a + (b - a) * u;
@@ -163,7 +163,9 @@ function resize() {
   W = Math.ceil(vw / PS); H = Math.ceil(vh / PS);
   cv.width = W; cv.height = H; cv.style.width = W * PS + 'px'; cv.style.height = H * PS + 'px';
   ctx.imageSmoothingEnabled = false;
-  cs = Math.max(1, Math.floor(Math.min(W, H) / 62));
+  portrait = H > W * 1.15;
+  // phones held upright: size people, plane and house by the screen width (fractional scales stay crisp)
+  cs = portrait ? Math.max(1, W / 54) : Math.max(1, Math.floor(Math.min(W, H) / 62));
   buildStreet();
 }
 
@@ -171,7 +173,7 @@ function resize() {
 const clouds = Array.from({ length: 14 }, (_, i) => ({ x: Math.random(), y: rand(0.08, 0.5), r: rand(3, 7), sp: rand(0.25, 0.6) }));
 function cloud(x, y, r) { disc(x, y, r, '#ffffff'); disc(x + r * 1.1, y + 1, r * 0.8, '#ffffff'); disc(x - r * 1.1, y + 1, r * 0.75, '#ffffff'); rect(x - r * 1.8, y + r * 0.5, r * 3.8, 1, '#dfe9f7'); }
 function drawFlight(t) {
-  const gyP = Math.round(H * 0.84);
+  const gyP = Math.round(H * (portrait ? 0.74 : 0.84));
   // sky
   const sky = ['#7cc6f2', '#8fd0f5', '#a5daf7', '#bfe4f8', '#d6eefa'];
   for (let i = 0; i < sky.length; i++) rect(0, i * gyP / sky.length, W, gyP / sky.length + 1, sky[i]);
@@ -255,7 +257,7 @@ function buildStreet() {
   }
 }
 function drawStreet(t) {
-  const gyS = Math.round(H * 0.78);
+  const gyS = Math.round(H * (portrait ? 0.7 : 0.78));
   const sky = ['#ffc98b', '#ffd5a1', '#ffe0b6', '#ffe9c9'];
   for (let i = 0; i < sky.length; i++) rect(0, i * gyS / sky.length, W, gyS / sky.length + 1, sky[i]);
   disc(W * 0.78, H * 0.18, Math.max(4, H * 0.06), '#ffb36b');
@@ -317,7 +319,7 @@ function drawHouse(x0, y0, s, open) {   // house is 44 x 48 local pixels, (x0, y
   R(0, 48, 44, 2, '#bfae97');
 }
 function drawHome(t) {
-  const gyH = Math.round(H * 0.86);
+  const gyH = Math.round(H * (portrait ? 0.74 : 0.86));
   const sky = ['#ffb88a', '#ffc79c', '#ffd6b0', '#ffe3c5'];
   for (let i = 0; i < sky.length; i++) rect(0, i * gyH / sky.length, W, gyH / sky.length + 1, sky[i]);
   disc(W * 0.15, H * 0.2, Math.max(4, H * 0.06), '#ffa45c');
