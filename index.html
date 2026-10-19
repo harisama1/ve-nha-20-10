@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Về nhà 20/10</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&display=swap">
+<style>
+/* Layout: one full-screen pixel film (low-res canvas, hard pixels); captions, the closing line and two buttons float above */
+:root{
+  --ink:#1b1430;        /* page ground, fades */
+  --plum:#2e1f55;       /* button face */
+  --lotus:#ff8fb1;      /* closing text */
+  --rose:#d9466f;       /* text shadow, button shadow */
+  --gold:#ffd166;       /* date line, focus */
+  --milk:#fff6ec;       /* button text */
+  --font-pixel:"VT323","Courier New",ui-monospace,monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{margin:0;background:var(--ink);color:var(--milk);overflow:hidden;font-family:var(--font-pixel)}
+#stage{position:fixed;inset:0;display:grid;place-items:center;overflow:hidden;background:var(--ink)}
+#c{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+
+#cap{position:fixed;left:max(16px,env(safe-area-inset-left,0px));top:calc(16px + env(safe-area-inset-top,0px));
+  font-size:clamp(24px,5vw,40px);line-height:1;color:var(--milk);background:var(--plum);padding:6px 12px 4px;
+  box-shadow:0 0 0 3px var(--milk),5px 5px 0 3px var(--rose);opacity:0;transition:opacity .4s steps(4);pointer-events:none}
+#cap.on{opacity:1}
+
+#msg{position:fixed;left:0;right:0;top:50%;transform:translateY(-55%);text-align:center;pointer-events:none;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;align-items:center;gap:18px}
+#line{margin:0;font-weight:400;white-space:pre-line;text-wrap:balance;font-size:clamp(42px,9.5vw,104px);line-height:.95;
+  letter-spacing:.03em;color:var(--lotus);text-shadow:4px 4px 0 var(--rose),8px 8px 0 #3a1240}
+#date{margin:0;font-size:clamp(26px,5vw,44px);letter-spacing:.3em;color:var(--gold);opacity:0;transition:opacity .6s steps(5)}
+#date.on{opacity:1}
+.cursor{display:inline-block;width:.45em;height:.12em;background:var(--lotus);animation:blink .6s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+
+.controls{position:fixed;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-wrap:wrap;justify-content:flex-end;gap:14px;max-width:calc(100vw - 32px)}
+button{font-family:var(--font-pixel);font-size:24px;line-height:1;background:var(--plum);color:var(--milk);border:0;padding:8px 14px 6px;cursor:pointer;
+  box-shadow:0 0 0 3px var(--milk),5px 5px 0 3px var(--rose)}
+button:hover{background:#3d2a6e}
+button:active{transform:translate(3px,3px);box-shadow:0 0 0 3px var(--milk),2px 2px 0 3px var(--rose)}
+button:focus-visible{outline:3px solid var(--gold);outline-offset:6px}
+[hidden]{display:none!important}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+*{box-sizing:border-box}
+</style>
+</head>
+<body>
+
+<div id="stage"><canvas id="c" aria-hidden="true"></canvas></div>
+<div id="cap" aria-hidden="true"></div>
+<div id="msg"><h1 id="line" aria-hidden="true"></h1><p id="date" aria-hidden="true">20 · 10</p><p class="sr" id="srText"></p></div>
+<div class="controls">
+  <button id="sound" type="button" aria-pressed="false">Âm thanh: tắt</button>
+  <button id="listen" type="button" hidden>▶ Nghe lời chúc</button>
+  <button id="replay" type="button" hidden>Xem lại</button>
+</div>
+<audio id="voice" src="loi-chuc.mp4" preload="auto"></audio>
+
+<script>
+(() => {
+const MESSAGE = 'Chúc mừng ngày\nPhụ nữ Việt Nam';
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const capEl = document.getElementById('cap'), lineEl = document.getElementById('line'), dateEl = document.getElementById('date');
+const srEl = document.getElementById('srText'), replayBtn = document.getElementById('replay'), soundBtn = document.getElementById('sound');
+const voice = document.getElementById('voice'), listenBtn = document.getElementById('listen');
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// timeline (seconds)
+const T = { planeEnd:8.8, walk:8.8, walkEnd:15.6, house:15.6, doorOpen:19.0, doorDone:19.8, momOut:19.8, sisOut:20.3, outDone:21.0,
+            turn:21.2, gift1:21.6, gift1End:22.4, gift2:23.0, gift2End:23.8, hug:24.4, hugDone:25.4, fade:27.2, text:29.0 };
+
+let W, H, PS, cs;
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, u) => a + (b - a) * u;
+const ease = u => 1 - Math.pow(1 - clamp(u), 3);
+const easeIO = u => { u = clamp(u); return u < .5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2; };
+const span = (t, a, b) => clamp((t - a) / (b - a));
+function srand(seed) { return () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
+
+// ---------- primitives ----------
+function rect(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(w)), Math.max(1, Math.round(h))); }
+function disc(cx, cy, r, c) {
+  ctx.fillStyle = c; const R = Math.max(0, r);
+  for (let dy = -Math.floor(R); dy <= Math.floor(R); dy++) {
+    const half = Math.floor(Math.sqrt(R * R - dy * dy));
+    ctx.fillRect(Math.round(cx) - half, Math.round(cy) + dy, half * 2 + 1, 1);
+  }
+}
+// sprite drawn with its pixel (ax, ay) at screen (sx, sy); fractional scales stay seamless
+function sprite(rows, pal, sx, sy, s, ax = 0, ay = 0, flip = false) {
+  const w = rows[0].length;
+  for (let j = 0; j < rows.length; j++) for (let i = 0; i < rows[j].length; i++) {
+    const c = pal[rows[j][i]]; if (!c) continue;
+    const ii = flip ? w - 1 - i : i;
+    const x0 = Math.round(sx + (ii - ax) * s), x1 = Math.round(sx + (ii + 1 - ax) * s);
+    const y0 = Math.round(sy + (j - ay) * s), y1 = Math.round(sy + (j + 1 - ay) * s);
+    ctx.fillStyle = c; ctx.fillRect(x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0));
+  }
+}
+// character standing: anchor bottom centre
+function stand(rows, x, footY, s, flip = false, pal = CP) { sprite(rows, pal, x, footY, s, rows[0].length / 2, rows.length, flip); }
+
+// ---------- sprites ----------
+const CP = { c:'#8b4a2b', C:'#6a361f', s:'#f6c9a4', e:'#2a1d2f', P:'#f59aa0', m:'#c2455a', o:'#f3e2c7', j:'#3f5fa8', k:'#2a1d2f',
+             b:'#1c1620', B:'#4a3b52', p:'#9b5fd0', n:'#3b2f45', g:'#2a1d2f', L:'#cfe8ff', G:'#4fa36b', y:'#ffe9a8', f:'#f6c9a4', r:'#d9466f', w:'#ffffff' };
+// me: chestnut hair, cream sweater, jeans
+const ME_FRONT = [
+  "...cccccc...", "..cccccccc..", ".cccCCCCccc.", ".ccsssssscc.", ".cssessessc.", ".csPssssPsc.", ".ccsssmsscc.",
+  "cc..ssss..cc", "cc.oooooo.cc", "c.oooooooo.c", ".oooooooooo.", ".oooooooooo.", "s.oooooooo.s",
+  "..jjjjjjjj..", "..jjjjjjjj..", "..jjj..jjj..", "..jjj..jjj..", "..jjj..jjj..", "..kkk..kkk.."];
+const ME_SIDE_TOP = [
+  "...cccccc...", "..cccccccc..", ".cccccccccs.", "ccccCcccssss", "ccccccssess.", "cccccsssPss.", "ccccccsssm..",
+  "ccccc..ss...", "cccC.oooo...", "cccc.ooooo..", "ccc..oooos..", "cc...oooo...", ".c...oooo...", ".....jjjj..."];
+const ME_LEGS_A = [".....jjjj...", "....jj..jj..", "...jj....jj.", "..jj.....jj.", "..kk.....kk."];
+const ME_LEGS_B = [".....jjjj...", ".....jjj....", ".....jjj....", ".....jjj....", ".....kkk...."];
+const ME_SIDE_A = ME_SIDE_TOP.concat(ME_LEGS_A);
+const ME_SIDE_B = ME_SIDE_TOP.concat(ME_LEGS_B);
+// mom: short curly black hair, purple blouse
+const MOM = [
+  "..bBbBbBbb..", ".bbBbbbbBbb.", "bBbbbbbbbbBb", "bbbssssssbbb", "bbssessesbbb", ".bsPssssPsb.", "..sssmmsss..",
+  "....ssss....", "..pppppppp..", ".pppppppppp.", ".pppppppppp.", ".pppppppppp.", "s.pppppppp.s",
+  "..nnnnnnnn..", "..nnnnnnnn..", "..nnn..nnn..", "..nnn..nnn..", "..nnn..nnn..", "..kkk..kkk.."];
+// sister: long black hair, glasses, holding her newborn
+const SIS = [
+  "...bbbbbb...", "..bbbbbbbb..", ".bbbbbbbbbb.", ".bbssssssbb.", ".bgLgsgLgbb.", ".bsPssssPsb.", ".bbsssmssbb.",
+  ".bb.ssss.bb.", ".bGGGGGGGGb.", ".bGyyyyyyGb.", ".bsyyffyysb.", ".bGyyffyyGb.", "..GyyyyyyG..",
+  "..rrrrrrrr..", ".rrrrrrrrrr.", ".rrrrrrrrrr.", "...ss..ss...", "...ss..ss...", "..kkk..kkk.."];
+const SUITCASE = ["...kk.", "...k..", "PPPPPP", "PwPPwP", "PPPPPP", "PwPPwP", "PPPPPP", ".k..k."];
+const SPAL = { k:'#2a1d2f', P:'#ff8fb1', w:'#ffd1e0' };
+const BOUQUET = [".rr..pp.", "rRRrpPPp", ".rryypp.", "..yYYy..", "..gwwg..", "...ww...", "...gg..."];
+const BPAL = { r:'#ff4d6d', R:'#c9184a', p:'#ff9ecb', P:'#e05aa0', y:'#ffd166', Y:'#f4a300', g:'#3fa34d', w:'#fff7e6' };
+const HEART = [".RR.RR.", "RppRppR", "RpppppR", ".RpppR.", "..RpR..", "...R..."];
+const HPAL = { R:'#c2185b', p:'#ff6f9f' };
+const PLANE = [
+  "rr..........................",
+  "rrr.........................",
+  "rrrr........................",
+  "rrrrwwwwwwwwwwwwwwwwwwwww...",
+  ".wwwwbwbwcwbwbwbwbwbwwwwwbb.",
+  ".wwwwwwwwwwwwwwwwwwwwwwwwwwk",
+  "..LLLLLLLLLLLLLLLLLLLLLLLLL.",
+  "...gggggggggggggggggggggggg.",
+  "..........DDDDDDD...........",
+  "............DDDDDD..........",
+  "..............DDDD.........."];
+const PPAL = { r:'#e0393e', w:'#fbfbff', b:'#6fa8dc', c:'#8b4a2b', k:'#2a2d3f', L:'#3f6fd1', g:'#c9cfdf', D:'#8d96b3' };
+const MOTO = [
+  "......hh......", ".....hhhs.....", "......bb......", ".....bbbbk....",
+  "..mmmmmmmmm...", ".kkmmmmmmmmkk.", "kwwk.....kwwk.", ".kk.......kk.."];
+const MPAL = { h:'#e63946', s:'#f6c9a4', b:'#3a86ff', k:'#2a1d2f', m:'#2b9348', w:'#c9cfdf' };
+
+// ---------- layout ----------
+function resize() {
+  const vw = innerWidth, vh = innerHeight;
+  PS = Math.max(3, Math.round(Math.min(vw, vh) / 160));
+  W = Math.ceil(vw / PS); H = Math.ceil(vh / PS);
+  cv.width = W; cv.height = H; cv.style.width = W * PS + 'px'; cv.style.height = H * PS + 'px';
+  ctx.imageSmoothingEnabled = false;
+  cs = Math.max(1, Math.floor(Math.min(W, H) / 62));
+  buildStreet();
+}
+
+// ---------- scene 1: flight Japan -> Vietnam ----------
+const clouds = Array.from({ length: 14 }, (_, i) => ({ x: Math.random(), y: rand(0.08, 0.5), r: rand(3, 7), sp: rand(0.25, 0.6) }));
+function cloud(x, y, r) { disc(x, y, r, '#ffffff'); disc(x + r * 1.1, y + 1, r * 0.8, '#ffffff'); disc(x - r * 1.1, y + 1, r * 0.75, '#ffffff'); rect(x - r * 1.8, y + r * 0.5, r * 3.8, 1, '#dfe9f7'); }
+function drawFlight(t) {
+  const gyP = Math.round(H * 0.84);
+  // sky
+  const sky = ['#7cc6f2', '#8fd0f5', '#a5daf7', '#bfe4f8', '#d6eefa'];
+  for (let i = 0; i < sky.length; i++) rect(0, i * gyP / sky.length, W, gyP / sky.length + 1, sky[i]);
+  disc(W * 0.82, H * 0.16, Math.max(4, H * 0.05), '#fff2b3'); disc(W * 0.82, H * 0.16, Math.max(3, H * 0.038), '#ffe066');
+  const JE = W * 1.3, SE = JE + W * 1.7, WL = SE + W * 2.0;
+  const scroll = (WL - W) * easeIO(t / T.planeEnd);
+  for (const c of clouds) { const x = ((c.x * W * 2 - scroll * c.sp) % (W * 2) + W * 2) % (W * 2) - W * 0.4; cloud(x, c.y * H, c.r * Math.min(W, H) / 120); }
+  const X = wx => wx - scroll;
+  // ground / sea
+  rect(0, gyP, W, H - gyP, '#6cbf5a');
+  const seaA = X(JE), seaB = X(SE);
+  if (seaB > 0 && seaA < W) {
+    rect(seaA, gyP, seaB - seaA, H - gyP, '#2f7fc1');
+    for (let x = Math.max(0, Math.floor(seaA)); x < Math.min(W, seaB); x++) for (let y = gyP + 2; y < H; y += 4)
+      if ((x + y * 3 + Math.floor(t * 8)) % 11 === 0) rect(x, y, 2, 1, '#7fc4f0');
+  }
+  rect(0, gyP, W, 1, '#4f9d45');
+  // Japan: runway, torii, Fuji, sakura
+  const fx = X(W * 0.62), fh = H * 0.42, fw = W * 0.36;
+  if (fx + fw > 0 && fx - fw < W) {
+    for (let y = 0; y < fh; y++) {
+      const half = fw * y / fh, yy = gyP - fh + y;
+      rect(fx - half, yy, half * 2 + 1, 1, y < fh * 0.26 ? ((Math.floor(fx + y) % 3 === 0 && y > fh * 0.2) ? '#6378b0' : '#f4f6ff') : '#6378b0');
+    }
+  }
+  const tx = X(W * 0.2), th = H * 0.16;
+  rect(tx - th * 0.35, gyP - th, 2, th, '#d1352b'); rect(tx + th * 0.35, gyP - th, 2, th, '#d1352b');
+  rect(tx - th * 0.55, gyP - th, th * 1.1 + 2, 2, '#2a1d2f'); rect(tx - th * 0.45, gyP - th * 0.8, th * 0.9 + 2, 1, '#d1352b');
+  for (const sx of [W * 0.95, W * 1.12]) { const x = X(sx); rect(x, gyP - H * 0.08, 2, H * 0.08, '#6b3e2e'); disc(x + 1, gyP - H * 0.1, H * 0.05, '#ffb7d0'); disc(x - 3, gyP - H * 0.08, H * 0.035, '#ff9ec3'); disc(x + 5, gyP - H * 0.085, H * 0.035, '#ffc9dc'); }
+  // Vietnam: Ha Long karsts, rice fields, palms, flag, runway
+  for (const [kx, kh, kw] of [[0.25, 0.22, 0.07], [0.42, 0.3, 0.06], [0.58, 0.18, 0.08], [0.78, 0.26, 0.06]]) {
+    const x = X(SE - W * 1.0 + kx * W), h = H * kh, w = W * kw;
+    if (x + w < 0 || x - w > W) continue;
+    for (let y = 0; y < h; y++) { const half = w * Math.pow(Math.sin(Math.PI * 0.5 * (0.35 + 0.65 * y / h)), 2); rect(x - half, gyP - h + y, half * 2 + 1, 1, y < 2 ? '#7fb069' : '#3f7d4a'); }
+  }
+  const vnA = X(SE);
+  if (vnA < W) {
+    for (let y = gyP + 1; y < H; y += 3) rect(Math.max(0, vnA), y, W, 1, '#8fd35b');
+    for (const px of [0.15, 0.35, 0.9, 1.25]) {
+      const x = X(SE + px * W); if (x < -10 || x > W + 10) continue;
+      const h = H * 0.12;
+      for (let i = 0; i < h; i++) rect(x + Math.sin(i / h * 1.5) * 2, gyP - i, 2, 1, '#8a5a34');
+      const top = gyP - h;
+      for (const a of [-2.6, -2.0, -1.2, -0.5]) for (let k = 0; k < h * 0.45; k++) rect(x + 1 + Math.cos(a) * k, top + Math.sin(a) * k * 0.5 + k * k * 0.02, 2, 1, '#2f8a4f');
+    }
+    const fxv = X(SE + W * 0.6);
+    rect(fxv, gyP - H * 0.2, 1, H * 0.2, '#ece7df');
+    const fw2 = Math.max(9, W * 0.05), fh2 = Math.round(fw2 * 0.66);
+    rect(fxv + 1, gyP - H * 0.2, fw2, fh2, '#da251d');
+    const scx = fxv + 1 + fw2 / 2, scy = gyP - H * 0.2 + fh2 / 2;
+    rect(scx - 1, scy - 2, 2, 4, '#ffcd00'); rect(scx - 2, scy - 1, 4, 2, '#ffcd00'); rect(scx - 3, scy - 1, 6, 1, '#ffcd00');
+  }
+  // runways
+  for (const [a, b] of [[0, W * 0.75], [SE + W * 0.9, WL]]) {
+    const x0 = X(a), x1 = X(b); if (x1 < 0 || x0 > W) continue;
+    rect(x0, gyP + 1, x1 - x0, 4, '#5d5f6e');
+    for (let x = x0; x < x1; x += 8) rect(x, gyP + 3, 4, 1, '#f4f4f4');
+  }
+  // plane: take off, cruise, land
+  const ground = gyP - 11 * cs * 0.9;
+  const up = easeIO(span(t, 0.9, 2.6)) - easeIO(span(t, 6.4, 8.0));
+  const py = lerp(ground, H * 0.22, up) + Math.sin(t * 2.2) * up * 1.5;
+  const tilt = (t > 0.9 && t < 2.6) || (t > 6.4 && t < 8.0);
+  const px = W * 0.34;
+  sprite(PLANE, PPAL, px, py, cs * 0.9, 14, 0);
+  if (tilt) rect(px - 14 * cs * 0.9 - 2, py + 5 * cs * 0.9, 2, 1, '#ffffff');
+  // contrail
+  if (up > 0.2) for (let i = 1; i < 12; i++) if ((i + Math.floor(t * 10)) % 3) rect(px - 14 * cs * 0.9 - i * 3, py + 4 * cs * 0.9, 2, 1, 'rgba(255,255,255,.8)');
+}
+
+// ---------- scene 2: walking home through the street ----------
+let street = [];
+function buildStreet() {
+  const r = srand(20 + W);
+  street = []; let x = 0;
+  const cols = ['#f2c14e', '#7fc8a9', '#f28c8c', '#9ab8f0', '#f5e6c8', '#c3a6e8'];
+  while (x < W * 6) {
+    const w = Math.round(lerp(16, 26, r()) * cs * 0.8), h = Math.round(lerp(0.3, 0.55, r()) * H);
+    street.push({ x, w, h, c: cols[Math.floor(r() * cols.length)], tree: r() < 0.45, sign: r() < 0.5, ac: r() < 0.6 });
+    x += w + Math.round(r() * 3);
+  }
+}
+function drawStreet(t) {
+  const gyS = Math.round(H * 0.78);
+  const sky = ['#ffc98b', '#ffd5a1', '#ffe0b6', '#ffe9c9'];
+  for (let i = 0; i < sky.length; i++) rect(0, i * gyS / sky.length, W, gyS / sky.length + 1, sky[i]);
+  disc(W * 0.78, H * 0.18, Math.max(4, H * 0.06), '#ffb36b');
+  const walkU = span(t, T.walk, T.walkEnd);
+  const scroll = (W * 4.2) * (walkU - 0.5 * Math.pow(walkU, 2) * 0.3);
+  // far rooftops
+  for (let x = -((scroll * 0.3) % 30); x < W; x += 30) { rect(x, gyS - H * 0.42, 20, H * 0.42, '#e8b48a'); rect(x + 22, gyS - H * 0.34, 8, H * 0.34, '#e3a77c'); }
+  // tube houses
+  for (const b of street) {
+    const x = Math.round(b.x - scroll); if (x > W || x + b.w < 0) continue;
+    rect(x, gyS - b.h, b.w, b.h, b.c);
+    rect(x, gyS - b.h, b.w, 2, '#9a3826'); rect(x + b.w - 1, gyS - b.h, 1, b.h, 'rgba(0,0,0,.12)');
+    for (let y = gyS - b.h + 5; y < gyS - 12; y += 11) {
+      rect(x + 3, y, b.w - 6, 6, '#9fd3f0'); rect(x + 3, y + 6, b.w - 6, 1, '#7a4b2a');
+      rect(x + Math.floor(b.w / 2), y, 1, 6, '#ffffff');
+      if (b.ac) rect(x + b.w - 6, y + 7, 4, 3, '#e8e8f0');
+    }
+    rect(x + 3, gyS - 11, b.w - 6, 11, '#5b3b28'); rect(x + 4, gyS - 10, b.w - 8, 10, '#3e2a1e');
+    if (b.sign) { rect(x + 2, gyS - 15, b.w - 4, 3, '#d1352b'); rect(x + 4, gyS - 14, b.w - 8, 1, '#ffd166'); }
+    if (b.tree) { rect(x + b.w - 2, gyS - 18, 2, 18, '#6b3e2e'); disc(x + b.w - 1, gyS - 22, 6, '#3f9b55'); disc(x + b.w + 3, gyS - 19, 4, '#4fb065'); }
+  }
+  // power lines, very Vietnamese
+  for (let k = 0; k < 3; k++) for (let x = 0; x < W; x++) {
+    const ph = ((x + scroll * 0.9) % 60) / 60;
+    rect(x, gyS - H * 0.5 + k * 3 + Math.sin(ph * Math.PI) * 4, 1, 1, '#4a3b52');
+  }
+  // sidewalk + street
+  rect(0, gyS, W, H - gyS, '#5d5f6e');
+  rect(0, gyS, W, 4, '#d8c7b0');
+  for (let x = -((scroll) % 8); x < W; x += 8) rect(x, gyS, 1, 4, '#bfae97');
+  for (let x = -((scroll * 1.0) % 16); x < W; x += 16) rect(x, gyS + (H - gyS) * 0.6, 8, 1, '#f4f4f4');
+  // motorbike passing the other way
+  const mu = span(t, 11.2, 13.4);
+  if (mu > 0 && mu < 1) sprite(MOTO, MPAL, lerp(W + 20, -30, mu), gyS + 6 + 8 * cs, cs, 7, 8, true);
+  // me, walking with my suitcase
+  const meX = W * 0.42, step = Math.floor(t * 6) % 2;
+  const bob = step ? 0 : -1;
+  sprite(SUITCASE, SPAL, meX - 9 * cs, gyS + 2, cs, 3, 8);
+  rect(meX - 7 * cs, gyS + 2 - 8 * cs, 3 * cs, 1, '#2a1d2f');
+  stand(step ? ME_SIDE_A : ME_SIDE_B, meX, gyS + 2 + bob, cs);
+}
+
+// ---------- scene 3: home ----------
+function drawHouse(x0, y0, s, open) {   // house is 44 x 48 local pixels, (x0, y0) its top-left
+  const R = (x, y, w, h, c) => rect(x0 + x * s, y0 + y * s, w * s + 0.5, h * s + 0.5, c);
+  for (let y = 0; y < 12; y++) { const half = 6 + y * 1.4; R(22 - half, y, half * 2, 1.05, y % 2 ? '#b5452f' : '#9a3826'); }
+  R(1, 11, 42, 1.5, '#6e2a1c');
+  R(4, 12, 36, 36, '#f2c14e'); R(36, 12, 4, 36, '#d9a73a');
+  for (const wx of [8, 27]) { R(wx - 1, 15, 11, 11, '#3c8d5a'); R(wx, 16, 9, 9, '#9fd3f0'); R(wx + 4, 16, 1, 9, '#ffffff'); R(wx, 20, 9, 1, '#ffffff'); }
+  R(4, 27, 36, 1, '#7a4b2a'); for (let x = 5; x < 40; x += 3) R(x, 28, 1, 3, '#7a4b2a'); R(4, 30, 36, 1, '#7a4b2a');
+  R(19, 31, 6, 3, '#2f5fb3'); R(20, 32, 1, 1, '#ffffff'); R(22, 32, 2, 1, '#ffffff');
+  for (const wx of [7, 30]) { R(wx - 1, 35, 9, 8, '#3c8d5a'); R(wx, 36, 7, 6, '#9fd3f0'); }
+  // doorway: warm light inside, two panels swinging open
+  R(16, 34, 12, 14, '#6e4325');
+  R(17, 35, 10, 13, '#ffcf7a'); R(17, 35, 10, 4, '#ffe2a8');
+  const pw = 5 * (1 - open);
+  if (pw > 0.2) { R(17, 35, pw, 13, '#8a5a34'); R(27 - pw, 35, pw, 13, '#8a5a34'); R(17 + pw - 1, 40, 0.8, 1, '#ffd166'); R(27 - pw + 0.2, 40, 0.8, 1, '#ffd166'); }
+  for (const px of [5, 38]) { R(px - 1, 44, 4, 4, '#c8553d'); R(px - 2, 40, 6, 4, '#3f9b55'); R(px, 39, 2, 1, '#ff8fb1'); }
+  R(0, 48, 44, 2, '#bfae97');
+}
+function drawHome(t) {
+  const gyH = Math.round(H * 0.86);
+  const sky = ['#ffb88a', '#ffc79c', '#ffd6b0', '#ffe3c5'];
+  for (let i = 0; i < sky.length; i++) rect(0, i * gyH / sky.length, W, gyH / sky.length + 1, sky[i]);
+  disc(W * 0.15, H * 0.2, Math.max(4, H * 0.06), '#ffa45c');
+  rect(0, gyH, W, H - gyH, '#d8c7b0'); for (let x = 0; x < W; x += 8) rect(x, gyH, 1, H - gyH, '#bfae97');
+  // house grows as I get closer
+  const fin = Math.min(W * 0.92 / 44, H * 0.8 / 50, 19 * cs * 1.45 / 13);
+  const z = lerp(0.3, 1, easeIO(span(t, T.house, T.doorOpen - 0.3)));
+  const hs = fin * z, hx = W / 2 - 22 * hs, hy = gyH - 48 * hs;
+  drawHouse(hx, hy, hs, ease(span(t, T.doorOpen, T.doorDone)));
+  const door = W / 2, cw = 12 * cs;
+  // me: walk in from the left, turn to face everyone
+  const meStop = door - 1.35 * cw;
+  const walkU = span(t, T.house, T.doorOpen - 0.4);
+  let meX = lerp(-cw, meStop, ease(walkU));
+  const hugU = easeIO(span(t, T.hug, T.hugDone));
+  meX = lerp(meX, door - 0.72 * cw, hugU);
+  const walking = walkU > 0 && walkU < 1;
+  // mom and sister step out of the doorway
+  const momU = ease(span(t, T.momOut, T.momOut + 0.7)), sisU = ease(span(t, T.sisOut, T.outDone));
+  const momX = door, sisX = lerp(door, door + 1.35 * cw, sisU);
+  const sisXf = lerp(sisX, door + 0.72 * cw, hugU);
+  const squeeze = hugU > 0.99 ? Math.round(Math.sin(t * 6) * 0.6) : 0;
+  const yIn = (u) => gyH - (1 - u) * 3 * cs;
+  if (t >= T.sisOut) stand(SIS, sisXf - squeeze, yIn(sisU), cs * lerp(0.82, 1, sisU));
+  if (t >= T.momOut) stand(MOM, momX, yIn(momU) - (hugU > 0.99 ? Math.abs(Math.sin(t * 6)) : 0), cs * lerp(0.82, 1, momU));
+  const front = t >= T.turn;
+  if (walking) stand(Math.floor(t * 6) % 2 ? ME_SIDE_A : ME_SIDE_B, meX, gyH + (Math.floor(t * 6) % 2 ? 0 : -1), cs);
+  else if (!front) stand(ME_SIDE_B, meX, gyH, cs);
+  else stand(ME_FRONT, meX + squeeze, gyH, cs);
+  // hug arms reaching across
+  if (hugU > 0.6) {
+    const ay = gyH - 9 * cs;
+    rect(meX + 4 * cs, ay, momX - meX - 6 * cs + cs, cs, '#f6c9a4');
+    rect(momX + 4 * cs, ay + cs, sisXf - momX - 6 * cs + cs, cs, '#9b5fd0');
+  }
+  // flowers: one bouquet each
+  const handY = gyH - 7.5 * cs;
+  const g1 = span(t, T.gift1, T.gift1End), g2 = span(t, T.gift2, T.gift2End);
+  const arc = (a, b, u) => [lerp(a[0], b[0], easeIO(u)), lerp(a[1], b[1], easeIO(u)) - Math.sin(Math.PI * u) * 6 * cs];
+  const mine = [meX + 5 * cs, handY], toMom = [momX + 4.5 * cs, handY], toSis = [sisXf - 4.5 * cs, handY];
+  if (front && t < T.gift1) { sprite(BOUQUET, BPAL, mine[0], mine[1], cs, 4, 5); sprite(BOUQUET, BPAL, mine[0] - 3 * cs, mine[1] + cs, cs, 4, 5); }
+  if (t >= T.gift1) { const p = g1 < 1 ? arc(mine, toMom, g1) : [toMom[0], toMom[1]]; sprite(BOUQUET, BPAL, p[0], p[1], cs, 4, 5); }
+  if (front && t >= T.gift1 && t < T.gift2) sprite(BOUQUET, BPAL, mine[0], mine[1], cs, 4, 5);
+  if (t >= T.gift2) { const p = g2 < 1 ? arc(mine, toSis, g2) : [toSis[0], toSis[1]]; sprite(BOUQUET, BPAL, p[0], p[1], cs, 4, 5); }
+  // hearts: thank-yous, then the big one over the hug
+  for (const [t0, x] of [[T.gift1End, momX], [T.gift2End, sisXf]]) {
+    const u = span(t, t0, t0 + 1.2);
+    if (u > 0 && u < 1) sprite(HEART, HPAL, x, gyH - 21 * cs - u * 8 * cs, Math.max(1, cs * 0.8), 3, 3);
+  }
+  if (t > T.hugDone) {
+    const pulse = 1 + Math.sin(t * 7) * 0.12;
+    sprite(HEART, HPAL, door, gyH - 25 * cs, cs * 2.2 * pulse, 3.5, 3);
+  }
+  if (t > T.outDone - 0.4 && t < T.gift1) {   // happy surprise marks
+    for (const x of [momX, sisXf]) { rect(x - 0.5 * cs, gyH - 23 * cs, cs, 2 * cs, '#c2455a'); rect(x - 0.5 * cs, gyH - 20.5 * cs, cs, cs, '#c2455a'); }
+  }
+}
+
+// ---------- ending: dusk sky, falling petals ----------
+let petals = [];
+function drawEnding(t, dt) {
+  const sky = ['#1b1430', '#221844', '#2b1d52', '#35225e'];
+  for (let i = 0; i < sky.length; i++) rect(0, i * H / sky.length, W, H / sky.length + 1, sky[i]);
+  if (Math.random() < dt * 9) petals.push({ x: rand(0, W), y: -4, vy: rand(H * 0.06, H * 0.12), ph: rand(0, 6), c: Math.random() < .5 ? '#ff8fb1' : '#ffd166' });
+  for (const p of petals) { p.y += p.vy * dt; const x = p.x + Math.sin(t * 1.6 + p.ph) * 6; rect(x, p.y, 2, 1, p.c); rect(x + 1, p.y + 1, 1, 1, p.c); }
+  petals = petals.filter(p => p.y < H + 4);
+  for (let i = 0; i < 40; i++) { const x = (i * 97) % W, y = (i * 53) % Math.round(H * 0.7); if (Math.sin(t * 2 + i) > 0.3) rect(x, y, 1, 1, '#9d8fd0'); }
+}
+
+// ---------- captions, closing text ----------
+let capShown = '', typed = -1;
+function caption(t) {
+  const c = t > 0.3 && t < 3.4 ? 'Nhật Bản' : (t > 6.2 && t < T.planeEnd - 0.2 ? 'Việt Nam' : (t > T.walk + 0.6 && t < T.walk + 3.6 ? 'Về nhà thôi' : ''));
+  if (c && c !== capShown) capEl.textContent = c;
+  capEl.classList.toggle('on', !!c);
+  capShown = c || capShown;
+}
+function closing(t) {
+  const chars = Array.from(MESSAGE);
+  const n = t < T.text ? 0 : Math.min(chars.length, Math.floor((t - T.text) / 0.1) + 1);
+  if (n === typed) return; typed = n;
+  lineEl.textContent = chars.slice(0, n).join('');
+  if (n > 0 && n < chars.length) { const c = document.createElement('span'); c.className = 'cursor'; lineEl.appendChild(c); if (chars[n - 1].trim()) tone(880, 880, 0.03, 'square', 0.014); }
+  if (n === chars.length) { dateEl.classList.add('on'); srEl.textContent = MESSAGE.replace('\n', ' ') + ', 20 tháng 10'; melody(); replayBtn.hidden = false; }
+}
+
+// ---------- sound (off until the button is pressed) ----------
+let ac = null, soundOn = false;
+function tone(f0, f1, dur, type = 'square', vol = 0.04, delay = 0) {
+  if (!soundOn || !ac) return;
+  const t0 = ac.currentTime + delay, o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(f0, t0); o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t0 + dur);
+  g.gain.setValueAtTime(vol, t0); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g).connect(ac.destination); o.start(t0); o.stop(t0 + dur + 0.02);
+}
+const notes = (list, step, type = 'square', vol = 0.03) => list.forEach((f, i) => tone(f, f, step * 0.9, type, vol, i * step));
+function melody() { notes([523, 659, 784, 1047, 988, 784, 880, 1047], 0.16); }
+const EVENTS = [
+  [0.9, () => tone(180, 520, 1.4, 'sawtooth', 0.015)],
+  [7.9, () => tone(500, 160, 0.6, 'triangle', 0.03)],
+  [T.walk + 0.4, () => notes([392, 494, 587, 784], 0.14, 'triangle', 0.035)],
+  [T.doorOpen, () => tone(220, 330, 0.5, 'triangle', 0.04)],
+  [T.momOut + 0.3, () => notes([784, 988], 0.1)],
+  [T.gift1End, () => notes([1047, 1319], 0.08, 'triangle', 0.05)],
+  [T.gift2End, () => notes([1175, 1568], 0.08, 'triangle', 0.05)],
+  [T.hugDone, () => notes([523, 659, 784, 659, 784, 1047], 0.12, 'triangle', 0.04)]];
+let fired = 0, lastStep = -1;
+soundBtn.addEventListener('click', () => {
+  soundOn = !soundOn;
+  if (soundOn && !ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { soundOn = false; } }
+  if (ac && ac.state === 'suspended') ac.resume();
+  soundBtn.textContent = soundOn ? 'Âm thanh: bật' : 'Âm thanh: tắt';
+  soundBtn.setAttribute('aria-pressed', String(soundOn));
+  if (soundOn) {
+    tone(660, 990, 0.1, 'square', 0.03);
+    // unlock the recording inside this tap so it may start by itself when the closing line appears
+    if (voiceDue) playVoice();
+    else if (!voicePlayed) { voice.muted = true; const p = voice.play(); if (p) p.then(() => { voice.pause(); voice.currentTime = 0; voice.muted = false; }).catch(() => { voice.muted = false; }); }
+  } else voice.pause();
+});
+// the recorded wish: plays as the closing line starts
+let voiceDue = false, voicePlayed = false;
+function playVoice() {
+  voice.muted = false; voice.currentTime = 0;
+  const p = voice.play();
+  if (p) p.then(() => { voicePlayed = true; }).catch(() => { listenBtn.hidden = false; });
+}
+listenBtn.addEventListener('click', playVoice);
+
+// ---------- film ----------
+function blackout(t) {   // scene cuts: dip to the page ground colour
+  let a = 0;
+  for (const [m, w] of [[T.planeEnd, 0.6], [T.walkEnd, 0.5]]) a = Math.max(a, 1 - Math.abs(t - m) / w);
+  a = Math.max(a, span(t, T.fade, T.fade + 1.6) * (1 - span(t, T.fade + 1.6, T.text)));
+  if (a > 0) { ctx.globalAlpha = clamp(a); rect(0, 0, W, H, '#1b1430'); ctx.globalAlpha = 1; }
+}
+let tNow = 0, last = 0;
+function reset() {
+  tNow = 0; fired = 0; lastStep = -1; typed = -1; petals = [];
+  voiceDue = false; voicePlayed = false; voice.pause(); listenBtn.hidden = true;
+  lineEl.textContent = ''; srEl.textContent = ''; dateEl.classList.remove('on'); replayBtn.hidden = true; capEl.classList.remove('on');
+}
+function frame(now) {
+  const dt = last ? Math.min(0.05, (now - last) / 1000) : 0; last = now; tNow += dt;
+  const t = tNow;
+  while (fired < EVENTS.length && t >= EVENTS[fired][0]) EVENTS[fired++][1]();
+  if (t > T.walk && t < T.walkEnd || t > T.house && t < T.doorOpen - 0.4) {
+    const st = Math.floor(t * 6); if (st !== lastStep && st % 2 === 0) tone(140, 90, 0.04, 'square', 0.015); lastStep = st;
+  }
+  if (t < T.walk) drawFlight(t);
+  else if (t < T.house) drawStreet(t);
+  else if (t < T.fade + 1.6) drawHome(t);
+  else drawEnding(t, dt);
+  blackout(t);
+  caption(t); closing(t);
+  if (!voiceDue && t >= T.text) { voiceDue = true; listenBtn.hidden = false; if (soundOn) playVoice(); }
+  requestAnimationFrame(frame);
+}
+replayBtn.addEventListener('click', reset);
+addEventListener('resize', resize);
+resize(); reset();
+if (reduceMotion) { tNow = T.text + 10; fired = EVENTS.length; }
+const jump = /^#t(\d+)$/.exec(location.hash);          // e.g. #t22 starts the film at second 22
+if (jump) { tNow = +jump[1]; while (fired < EVENTS.length && EVENTS[fired][0] < tNow) fired++; }
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
